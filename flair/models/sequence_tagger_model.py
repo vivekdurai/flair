@@ -240,12 +240,15 @@ class SequenceTagger(flair.nn.Classifier[Sentence]):
         # calculate loss given scores and labels
         return self._calculate_loss(scores, gold_labels)
 
-    def forward(self, sentences: Union[List[Sentence], Sentence]):
+    def forward(self, sentences: Union[List[Sentence], Sentence], skip_embedding: bool = False):
         """
         Forward propagation through network. Returns gold labels of batch in addition.
         :param sentences: Batch of current sentences
         """
-        self.embeddings.embed(sentences)
+        if skip_embedding:
+            pass
+        else:
+            self.embeddings.embed(sentences)
 
         # make a zero-padded tensor for the whole sentence
         lengths, sentence_tensor = self._make_padded_tensor_for_batch(sentences)

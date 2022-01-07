@@ -391,6 +391,84 @@ class TARSTagger(FewshotClassifier):
                 "before training this model"
             )
 
+    def forward_loss(
+        self, data_points: Union[List[Sentence], Sentence]
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, int]]:
+        # from FewShot forward()
+        if not isinstance(data_points, list):
+            data_points = [data_points]
+
+        # TARS model forward loss()
+        # if there are no sentences, there is no loss
+        if len(data_points) == 0:
+            return torch.tensor(0.0, dtype=torch.float, device=flair.device, requires_grad=True), 0
+
+        #Override embed method
+        if not self.tars_model.embeddings._everything_embedded(data_points) or not self.tars_model.embeddings.static_embeddings:
+            expanded_sentences = []
+            context_offsets = []
+
+            if self.tars_model.embeddings.context_length > 0:
+                # set context if not set already
+                previous_sentence = None
+                for sentence in data_points:
+                    if sentence.is_context_set():
+                        continue
+                    sentence._previous_sentence = previous_sentence
+                    sentence._next_sentence = None
+                    if previous_sentence:
+                        previous_sentence._next_sentence = sentence
+                    previous_sentence = sentence
+
+                for sentence in data_points:
+                    # create expanded sentence and remember context offsets
+                    expanded_sentence, context_offset = self.tars_model.embeddings._expand_sentence_with_context(sentence)
+                    expanded_sentences.append(expanded_sentence)
+                    context_offsets.append(context_offset)
+            else:
+                expanded_sentences.extend(data_points)
+
+            # Transform input data into TARS format
+            expanded_sentences = self._get_tars_formatted_sentences(expanded_sentences)
+            self.tars_model.embeddings._add_embeddings_to_sentences(expanded_sentences)
+
+            tars_label_offsets = []
+            for original_sentence, expanded_sentence, context_offset in zip(
+                    data_points, expanded_sentences, context_offsets
+            ):
+                tars_offset = 0
+                for token_idx, token in enumerate(expanded_sentence):
+                    original_sentence.tokens.insert(token_idx, token)
+                    tars_offset += 1
+                    if token.text == self.separator:
+                        tars_label_offsets.append(tars_offset)
+                        break
+
+            # move embeddings from context back to original sentence (if using context)
+            if self.tars_model.embeddings.context_length > 0:
+                for original_sentence, expanded_sentence, context_offset, tars_offset in zip(
+                        data_points, expanded_sentences, context_offsets, tars_label_offsets
+                ):
+                    if self.tars_model.embeddings.token_embedding:
+                        for token_idx, token in enumerate(original_sentence):
+                            if token_idx >= tars_offset:
+                                token.set_embedding(
+                                    self.tars_model.embeddings.name,
+                                    expanded_sentence[token_idx + context_offset].get_embedding(self.tars_model.embeddings.name),
+                                )
+                                assert token.text == expanded_sentence[token_idx + context_offset].text
+                    if self.tars_model.embeddings.document_embedding:
+                        original_sentence.set_embedding(self.tars_model.embeddings.name, expanded_sentence.get_embedding(self.tars_model.embeddings.name))
+
+        # forward pass to get scores
+        scores, gold_labels = self.tars_model.forward(data_points, skip_embedding=True)  # type: ignore
+
+        # calculate loss given scores and labels
+        loss = self.tars_model._calculate_loss(scores, gold_labels)
+
+        return loss
+
+
     def _get_tars_formatted_sentence(self, label, sentence):
 
         original_text = sentence.to_tokenized_string()
