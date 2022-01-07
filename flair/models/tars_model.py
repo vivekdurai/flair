@@ -429,6 +429,7 @@ class TARSTagger(FewshotClassifier):
                 expanded_sentences.extend(data_points)
 
             # Transform input data into TARS format
+            data_points = self._get_tars_formatted_sentences(data_points)
             expanded_sentences = self._get_tars_formatted_sentences(expanded_sentences)
             self.tars_model.embeddings._add_embeddings_to_sentences(expanded_sentences)
 
@@ -438,7 +439,6 @@ class TARSTagger(FewshotClassifier):
             ):
                 tars_offset = 0
                 for token_idx, token in enumerate(expanded_sentence):
-                    original_sentence.tokens.insert(token_idx, token)
                     tars_offset += 1
                     if token.text == self.separator:
                         tars_label_offsets.append(tars_offset)
@@ -457,6 +457,13 @@ class TARSTagger(FewshotClassifier):
                                     expanded_sentence[token_idx + context_offset].get_embedding(self.tars_model.embeddings.name),
                                 )
                                 assert token.text == expanded_sentence[token_idx + context_offset].text
+                            else:
+                                token.set_embedding(
+                                    self.tars_model.embeddings.name,
+                                    expanded_sentence[token_idx].get_embedding(
+                                        self.tars_model.embeddings.name),
+                                )
+                                assert token.text == expanded_sentence[token_idx].text
                     if self.tars_model.embeddings.document_embedding:
                         original_sentence.set_embedding(self.tars_model.embeddings.name, expanded_sentence.get_embedding(self.tars_model.embeddings.name))
 
