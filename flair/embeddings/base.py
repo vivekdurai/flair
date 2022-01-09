@@ -733,7 +733,11 @@ class TransformerEmbedding(Embeddings[Sentence]):
             left_context = sentence.left_context(self.context_length, self.respect_document_boundaries)
             right_context = sentence.right_context(self.context_length, self.respect_document_boundaries)
 
-        expanded_sentence = Sentence(left_context + [t.text for t in sentence.tokens] + right_context)
+        expanded_sentence = Sentence(left_context)
+        for token in sentence:
+            expanded_sentence.add_token(token)
+        for token in right_context:
+            expanded_sentence.add_token(token)
 
         context_length = len(left_context)
         return expanded_sentence, context_length
