@@ -54,7 +54,7 @@ class FewshotClassifier(flair.nn.Classifier[Sentence]):
     def _get_tars_formatted_sentence(self, label, sentence):
         raise NotImplementedError
 
-    def _get_tars_formatted_sentences(self, sentences: List[Sentence], context_offsets, original_lengths):
+    def _get_tars_formatted_sentences(self, sentences: List[Sentence], context_offsets: list = [], original_lengths: list = []):
         label_text_pairs = []
         extended_offsets = []
         extended_original_lengths = []
@@ -435,35 +435,22 @@ class TARSTagger(FewshotClassifier):
 
             # Transform input data into TARS format
             original_lengths = [len(x) for x in data_points]
-            expanded_sentences, context_offsets, original_lengths = self._get_tars_formatted_sentences(expanded_sentences, context_offsets, original_lengths)
+            expanded_sentences, context_offsets, original_lengths = self._get_tars_formatted_sentences(data_points, context_offsets, original_lengths)
             self.tars_model.embeddings._add_embeddings_to_sentences(expanded_sentences)
 
-            tars_label_offsets = []
-            for expanded_sentence, context_offset in zip(
-                expanded_sentences, context_offsets
-            ):
-                tars_offset = 0
-                for token_idx, token in enumerate(expanded_sentence):
-                    tars_offset += 1
-                    if token.text == self.separator:
-                        tars_label_offsets.append(tars_offset)
-                        break
-
-            # move embeddings from context back to original sentence (if using context)
             final_sentences = []
-            if self.tars_model.embeddings.context_length > 0:
-                for expanded_sentence, original_length, context_offset, tars_offset in zip(
-                        expanded_sentences, original_lengths, context_offsets, tars_label_offsets
-                ):
-                    final_sentence = Sentence()
-                    if self.tars_model.embeddings.token_embedding:
-                        for label_idx in range(tars_offset):
-                            final_sentence.add_token(expanded_sentence[label_idx])
+            for sentence in expanded_sentences:
+                final_sentence = Sentence()
+                sep_count = 0
+                for token in sentence:
+                    if token.text == self.separator:
+                        sep_count += 1
+                    if sep_count == 2:
+                        continue
+                    else:
+                        final_sentence.add_token(token)
+                final_sentences.append(final_sentence)
 
-                        for token_idx in range(original_length):
-                            final_sentence.add_token(expanded_sentence[tars_offset + context_offset + token_idx])
-
-                    final_sentences.append(final_sentence)
 
         # forward pass to get scores
         scores, gold_labels = self.tars_model.forward(final_sentences, skip_embedding=True)  # type: ignore
@@ -478,9 +465,20 @@ class TARSTagger(FewshotClassifier):
 
         original_text = sentence.to_tokenized_string()
 
-        label_text_pair = (
-            f"{label} {self.separator} {original_text}" if self.prefix else f"{original_text} {self.separator} {label}"
-        )
+        context = ""
+        if sentence._previous_sentence:
+            context += sentence._previous_sentence.to_tokenized_string() + " "
+        if sentence._next_sentence:
+            context += sentence._next_sentence.to_tokenized_string()
+
+        if context:
+            label_text_pair = (
+                f"{label} {self.separator} {original_text} {self.separator} {context}" if self.prefix else f"{original_text} {self.separator} {label} {self.separator} {context}"
+            )
+        else:
+            label_text_pair = (
+                f"{label} {self.separator} {original_text}" if self.prefix else f"{original_text} {self.separator} {label}"
+            )
 
         label_length = 0 if not self.prefix else len(label.split(" ")) + len(self.separator.split(" "))
 
