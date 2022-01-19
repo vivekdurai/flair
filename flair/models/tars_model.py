@@ -54,11 +54,19 @@ class FewshotClassifier(flair.nn.Classifier[Sentence]):
     def _get_tars_formatted_sentence(self, label, sentence):
         raise NotImplementedError
 
-    def _get_tars_formatted_sentences(self, sentences: List[Sentence], context_offsets, original_lengths):
+    def _get_tars_formatted_sentences(self,
+                                      sentences: List[Sentence],
+                                      context_offsets,
+                                      original_lengths,
+                                      label: Optional = None):
         label_text_pairs = []
         extended_offsets = []
         extended_original_lengths = []
-        all_labels = [label.decode("utf-8") for label in self.get_current_label_dictionary().idx2item]
+
+        if label:
+            all_labels = [label]
+        else:
+            all_labels = [label.decode("utf-8") for label in self.get_current_label_dictionary().idx2item]
         for sentence, context_offset, original_length in zip(sentences, context_offsets, original_lengths):
             label_text_pairs_for_sentence = []
             if self.training and self.num_negative_labels_to_sample is not None:
@@ -408,26 +416,46 @@ class TARSTagger(FewshotClassifier):
         if len(data_points) == 0:
             return torch.tensor(0.0, dtype=torch.float, device=flair.device, requires_grad=True), 0
 
-        #Override embed method
-        if not self.tars_model.embeddings._everything_embedded(data_points) or not self.tars_model.embeddings.static_embeddings:
+        if self.tars_model.embeddings.context_length == 0:
+
+            expanded_sentences, context_offsets, original_lengths = self._get_tars_formatted_sentences(data_points, [1] * len(data_points), [1] * len(data_points))
+
+            # forward pass to get scores
+            scores, gold_labels = self.tars_model.forward(expanded_sentences, skip_embedding=False)  # type: ignore
+
+            # calculate loss given scores and labels
+            loss = self.tars_model._calculate_loss(scores, gold_labels)
+
+            return loss
+
+        final_sentences = self._make_and_embed_tars_with_context(data_points)
+
+        print(final_sentences[0])
+        print(final_sentences[0][0].embedding[:6])
+        print(final_sentences[0][1].embedding[:6])
+        print(final_sentences[0][2].embedding[:6])
+
+        # forward pass to get scores
+        scores, gold_labels = self.tars_model.forward(final_sentences, skip_embedding=True)  # type: ignore
+
+        # calculate loss given scores and labels
+        loss = self.tars_model._calculate_loss(scores, gold_labels)
+
+        return loss
+
+    def _make_and_embed_tars_with_context(self, data_points, label = None):
+        # Override embed method
+        if not self.tars_model.embeddings._everything_embedded(
+                data_points) or not self.tars_model.embeddings.static_embeddings:
             expanded_sentences = []
             context_offsets = []
 
             if self.tars_model.embeddings.context_length > 0:
                 # set context if not set already
-                previous_sentence = None
-                for sentence in data_points:
-                    if sentence.is_context_set():
-                        continue
-                    sentence._previous_sentence = previous_sentence
-                    sentence._next_sentence = None
-                    if previous_sentence:
-                        previous_sentence._next_sentence = sentence
-                    previous_sentence = sentence
-
                 for sentence in data_points:
                     # create expanded sentence and remember context offsets
-                    expanded_sentence, context_offset = self.tars_model.embeddings._expand_sentence_with_context(sentence)
+                    expanded_sentence, context_offset = self.tars_model.embeddings._expand_sentence_with_context(
+                        sentence)
                     expanded_sentences.append(expanded_sentence)
                     context_offsets.append(context_offset)
             else:
@@ -435,12 +463,14 @@ class TARSTagger(FewshotClassifier):
 
             # Transform input data into TARS format
             original_lengths = [len(x) for x in data_points]
-            expanded_sentences, context_offsets, original_lengths = self._get_tars_formatted_sentences(expanded_sentences, context_offsets, original_lengths)
+            expanded_sentences, context_offsets, original_lengths = \
+                self._get_tars_formatted_sentences(expanded_sentences, context_offsets, original_lengths, label=label)
+            # print(expanded_sentences)
             self.tars_model.embeddings._add_embeddings_to_sentences(expanded_sentences)
 
             tars_label_offsets = []
             for expanded_sentence, context_offset in zip(
-                expanded_sentences, context_offsets
+                    expanded_sentences, context_offsets
             ):
                 tars_offset = 0
                 for token_idx, token in enumerate(expanded_sentence):
@@ -464,15 +494,7 @@ class TARSTagger(FewshotClassifier):
                             final_sentence.add_token(expanded_sentence[tars_offset + context_offset + token_idx])
 
                     final_sentences.append(final_sentence)
-
-        # forward pass to get scores
-        scores, gold_labels = self.tars_model.forward(final_sentences, skip_embedding=True)  # type: ignore
-
-        # calculate loss given scores and labels
-        loss = self.tars_model._calculate_loss(scores, gold_labels)
-
-        return loss
-
+        return final_sentences
 
     def _get_tars_formatted_sentence(self, label, sentence):
 
@@ -622,7 +644,10 @@ class TARSTagger(FewshotClassifier):
 
                     all_detected = {}
                     for label in all_labels:
-                        tars_sentence = self._get_tars_formatted_sentence(label, sentence)
+                        # tars_sentence = self._get_tars_formatted_sentence(label, sentence)
+
+                        tars_sentence = self._make_and_embed_tars_with_context([sentence], label)[0]
+                        # print(tars_sentence)
 
                         label_length = 0 if not self.prefix else len(label.split(" ")) + len(self.separator.split(" "))
 
