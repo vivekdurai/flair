@@ -435,7 +435,7 @@ class TARSTagger(FewshotClassifier):
 
             # Transform input data into TARS format
             original_lengths = [len(x) for x in data_points]
-            expanded_sentences, context_offsets, original_lengths = self._get_tars_formatted_sentences(data_points, context_offsets, original_lengths)
+            expanded_sentences, context_offsets, original_lengths = self._get_tars_formatted_sentences(expanded_sentences, context_offsets, original_lengths)
             self.tars_model.embeddings._add_embeddings_to_sentences(expanded_sentences)
 
             final_sentences = []
@@ -465,20 +465,9 @@ class TARSTagger(FewshotClassifier):
 
         original_text = sentence.to_tokenized_string()
 
-        context = ""
-        if sentence._previous_sentence:
-            context += sentence._previous_sentence.to_tokenized_string() + " "
-        if sentence._next_sentence:
-            context += sentence._next_sentence.to_tokenized_string()
-
-        if context:
-            label_text_pair = (
-                f"{label} {self.separator} {original_text} {self.separator} {context}" if self.prefix else f"{original_text} {self.separator} {label} {self.separator} {context}"
-            )
-        else:
-            label_text_pair = (
-                f"{label} {self.separator} {original_text}" if self.prefix else f"{original_text} {self.separator} {label}"
-            )
+        label_text_pair = (
+            f"{label} {self.separator} {original_text}" if self.prefix else f"{original_text} {self.separator} {label}"
+        )
 
         label_length = 0 if not self.prefix else len(label.split(" ")) + len(self.separator.split(" "))
 
