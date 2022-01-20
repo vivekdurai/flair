@@ -376,6 +376,7 @@ class SequenceTagger(flair.nn.Classifier[Sentence]):
         label_name: Optional[str] = None,
         return_loss=False,
         embedding_storage_mode="none",
+        skip_embedding = False,
     ):
         """
         Predicts labels for current batch with CRF or Softmax.
@@ -430,7 +431,7 @@ class SequenceTagger(flair.nn.Classifier[Sentence]):
                     continue
 
                 # get features from forward propagation
-                features, gold_labels = self.forward(batch)
+                features, gold_labels = self.forward(batch, skip_embedding)
 
                 # remove previously predicted labels of this type
                 for sentence in batch:

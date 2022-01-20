@@ -646,6 +646,7 @@ class TARSTagger(FewshotClassifier):
 
                         tars_sentences, offsets = self._make_and_embed_tars_with_context([sentence], label)
                         tars_sentence = tars_sentences[0]
+                        print(tars_sentence)
 
                         label_length = 0 if not self.prefix else len(label.split(" ")) + len(self.separator.split(" "))
 
@@ -653,6 +654,7 @@ class TARSTagger(FewshotClassifier):
                             tars_sentence,
                             label_name=label_name,
                             return_loss=True,
+                            skip_embedding=True,
                         )
                         overall_loss += loss_and_count[0].item()
                         overall_count += loss_and_count[1]
