@@ -428,12 +428,7 @@ class TARSTagger(FewshotClassifier):
 
             return loss
 
-        final_sentences = self._make_and_embed_tars_with_context(data_points)
-
-        print(final_sentences[0])
-        print(final_sentences[0][0].embedding[:6])
-        print(final_sentences[0][1].embedding[:6])
-        print(final_sentences[0][2].embedding[:6])
+        final_sentences, _ = self._make_and_embed_tars_with_context(data_points)
 
         # forward pass to get scores
         scores, gold_labels = self.tars_model.forward(final_sentences, skip_embedding=True)  # type: ignore
@@ -488,13 +483,16 @@ class TARSTagger(FewshotClassifier):
                     final_sentence = Sentence()
                     if self.tars_model.embeddings.token_embedding:
                         for label_idx in range(tars_offset):
-                            final_sentence.add_token(expanded_sentence[label_idx])
+                            final_sentence.add_token(expanded_sentence[label_idx],
+                                                     force_adjuct_indices=True,
+                                                     )
 
                         for token_idx in range(original_length):
-                            final_sentence.add_token(expanded_sentence[tars_offset + context_offset + token_idx])
+                            final_sentence.add_token(expanded_sentence[tars_offset + context_offset + token_idx],
+                                                     force_adjuct_indices=True,)
 
                     final_sentences.append(final_sentence)
-        return final_sentences
+        return final_sentences, tars_label_offsets
 
     def _get_tars_formatted_sentence(self, label, sentence):
 
@@ -646,8 +644,8 @@ class TARSTagger(FewshotClassifier):
                     for label in all_labels:
                         # tars_sentence = self._get_tars_formatted_sentence(label, sentence)
 
-                        tars_sentence = self._make_and_embed_tars_with_context([sentence], label)[0]
-                        # print(tars_sentence)
+                        tars_sentences, offsets = self._make_and_embed_tars_with_context([sentence], label)
+                        tars_sentence = tars_sentences[0]
 
                         label_length = 0 if not self.prefix else len(label.split(" ")) + len(self.separator.split(" "))
 
@@ -687,17 +685,32 @@ class TARSTagger(FewshotClassifier):
                         sorted_x = sorted(all_detected.items(), key=operator.itemgetter(1))
                         sorted_x.reverse()
                         for tuple in sorted_x:
+                            #
+                            # print(tuple)
+
                             # get the span and its label
                             span = tuple[0]
                             label = span.get_labels("tars_temp_label")[0].value
                             label_length = (
                                 0 if not self.prefix else len(label.split(" ")) + len(self.separator.split(" "))
                             )
+                            # print(span)
+                            # print(label)
+                            # print(label_length)
+                            #
+                            # print(sentence)
+                            # print(sentence.get_token(1))
+                            # print(sentence.get_token(2))
 
                             # determine whether tokens in this span already have a label
                             tag_this = True
                             for token in span:
+                                # print("-")
                                 corresponding_token = sentence.get_token(token.idx - label_length)
+                                # print(token)
+                                # print(token.idx)
+                                # print(token.idx  - label_length)
+                                # print(corresponding_token)
                                 if corresponding_token is None:
                                     tag_this = False
                                     continue
