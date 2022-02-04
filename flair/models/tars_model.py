@@ -421,6 +421,14 @@ class TARSTagger(FewshotClassifier):
     def forward_loss(
         self, data_points: Union[List[Sentence], Sentence]
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, int]]:
+        if not any([bool(x.multitask_annotations) for x in data_points]):
+            pass
+        else:
+            task_id = set([item.task_id for sublist in [x.multitask_annotations for x in data_points] for item in sublist])
+            assert len(task_id) == 1
+            task_id = task_id.pop()
+            self.switch_to_task(task_id)
+
         # from FewShot forward()
         if not isinstance(data_points, list):
             data_points = [data_points]
@@ -615,13 +623,13 @@ class TARSTagger(FewshotClassifier):
         you wish to not only predict, but also keep the generated embeddings in CPU or GPU memory respectively.
         'gpu' to store embeddings in GPU memory.
         """
-        if "task" in kwargs.keys():
-            task = kwargs.get("task")
-        elif set([x.multitask_annotations[0].task_id for x in sentences]):
-            task = set([x.multitask_annotations[0].task_id for x in sentences]).pop()
+        if not any([bool(x.multitask_annotations) for x in sentences]):
+            pass
         else:
-            raise ValueError
-        self.switch_to_task(task)
+            task_id = set([item.task_id for sublist in [x.multitask_annotations for x in sentences] for item in sublist])
+            assert len(task_id) == 1
+            task_id = task_id.pop()
+            self.switch_to_task(task_id)
 
         if label_name is None:
             label_name = self.get_current_label_type()
