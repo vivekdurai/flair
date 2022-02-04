@@ -186,6 +186,10 @@ class Classifier(Model[DT], typing.Generic[DT]):
     unified evaluate() function so that all classification models use the same
     evaluation routines and compute the same numbers."""
 
+    def __init__(self):
+        super().__init__()
+        self.corpus_name = ""
+
     def evaluate(
         self,
         data_points: Union[List[DT], Dataset],
@@ -234,6 +238,7 @@ class Classifier(Model[DT], typing.Generic[DT]):
                     mini_batch_size=mini_batch_size,
                     label_name="predicted",
                     return_loss=True,
+                    **kwargs
                 )
 
                 if isinstance(loss_and_count, tuple):
