@@ -38,13 +38,13 @@ class FewshotClassifier(flair.nn.Classifier[Sentence]):
         self, data_points: Union[List[Sentence], Sentence], **kwargs
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, int]]:
 
-        if "task" in kwargs.keys():
-            task = kwargs.get("task")
-        elif set([x.multitask_annotations[0].task_id for x in data_points]):
-            task = set([x.multitask_annotations[0].task_id for x in data_points]).pop()
+        if not any([bool(x.multitask_annotations) for x in data_points]):
+            pass
         else:
-            raise ValueError
-        self.switch_to_task(task_name=task)
+            task_id = set([item.task_id for sublist in [x.multitask_annotations for x in data_points] for item in sublist])
+            assert len(task_id) == 1
+            task_id = task_id.pop()
+            self.switch_to_task(task_id)
 
         if not isinstance(data_points, list):
             data_points = [data_points]
@@ -64,18 +64,17 @@ class FewshotClassifier(flair.nn.Classifier[Sentence]):
 
     def _get_tars_formatted_sentences(self,
                                       sentences: List[Sentence],
-                                      context_offsets,
-                                      original_lengths,
                                       label: Optional = None):
         label_text_pairs = []
-        extended_offsets = []
-        extended_original_lengths = []
 
         if label:
             all_labels = [label]
         else:
             all_labels = [label.decode("utf-8") for label in self.get_current_label_dictionary().idx2item]
-        for sentence, context_offset, original_length in zip(sentences, context_offsets, original_lengths):
+
+        examples_per_sentence = []
+
+        for sentence in sentences:
             label_text_pairs_for_sentence = []
             if self.training and self.get_current_num_negative_samples() is not None:
 
@@ -94,11 +93,10 @@ class FewshotClassifier(flair.nn.Classifier[Sentence]):
                 for label in all_labels:
                     label_text_pairs_for_sentence.append(self._get_tars_formatted_sentence(label, sentence))
 
-            extended_offsets.extend(len(label_text_pairs_for_sentence) * [context_offset])
-            extended_original_lengths.extend(len(label_text_pairs_for_sentence) * [original_length])
             label_text_pairs.extend(label_text_pairs_for_sentence)
+            examples_per_sentence.append(len(label_text_pairs_for_sentence))
 
-        return label_text_pairs, extended_offsets, extended_original_lengths
+        return label_text_pairs, examples_per_sentence
 
     def _get_nearest_labels_for(self, labels):
 
@@ -117,12 +115,12 @@ class FewshotClassifier(flair.nn.Classifier[Sentence]):
 
             plausible_labels = []
             plausible_label_probabilities = []
-            for plausible_label in self.label_nearest_map[self._current_task][label]:
+            for plausible_label in self.get_current_label_sim_matrix(label):
                 if plausible_label in already_sampled_negative_labels or plausible_label in labels:
                     continue
                 else:
                     plausible_labels.append(plausible_label)
-                    plausible_label_probabilities.append(self.label_nearest_map[self._current_task][label][plausible_label])
+                    plausible_label_probabilities.append(self.get_current_label_sim_matrix(label).get(plausible_label))
 
             # make sure the probabilities always sum up to 1
             plausible_label_probabilities = np.array(plausible_label_probabilities, dtype="float64")
@@ -159,6 +157,7 @@ class FewshotClassifier(flair.nn.Classifier[Sentence]):
         Compute the similarity between all labels for better sampling of negatives
         """
         for task_name in self._task_specific_attributes.keys():
+            self.switch_to_task(task_name)
             # get and embed all labels by making a Sentence object that contains only the label text
             all_labels = [label.decode("utf-8") for label in self._task_specific_attributes[task_name]['label_dictionary'].idx2item]
             label_sentences = [Sentence(label) for label in all_labels]
@@ -186,7 +185,8 @@ class FewshotClassifier(flair.nn.Classifier[Sentence]):
                 for column_index, other_label in enumerate(all_labels):
                     if label != other_label:
                         negative_label_probabilities[label][other_label] = similarity_matrix[row_index][column_index]
-            self.label_nearest_map[task_name] = negative_label_probabilities
+            self.label_nearest_map = negative_label_probabilities
+            self._task_specific_attributes[task_name] = {**self._task_specific_attributes[task_name], **{"label_nearest_map": negative_label_probabilities}}
 
     def get_current_label_dictionary(self):
         label_dictionary = self._task_specific_attributes[self._current_task]["label_dictionary"]
@@ -198,6 +198,12 @@ class FewshotClassifier(flair.nn.Classifier[Sentence]):
 
     def get_current_label_type(self):
         return self._task_specific_attributes[self._current_task]["label_type"]
+
+    def get_current_label_sim_matrix(self, label: str = None):
+        if label:
+            return self._task_specific_attributes[self._current_task]["label_nearest_map"].get(label)
+        else:
+            return self._task_specific_attributes[self._current_task]["label_nearest_map"]
 
     def is_current_task_multi_label(self):
         return self._task_specific_attributes[self._current_task]["multi_label"]
@@ -419,7 +425,7 @@ class TARSTagger(FewshotClassifier):
             )
 
     def forward_loss(
-        self, data_points: Union[List[Sentence], Sentence]
+        self, data_points: Union[List[Sentence], Sentence], **kwargs
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, int]]:
         if not any([bool(x.multitask_annotations) for x in data_points]):
             pass
@@ -439,82 +445,77 @@ class TARSTagger(FewshotClassifier):
             return torch.tensor(0.0, dtype=torch.float, device=flair.device, requires_grad=True), 0
 
         if self.tars_model.embeddings.context_length == 0:
+            use_context = False
+            sentences, examples_per_sentence = self._get_tars_formatted_sentences(data_points)
 
-            expanded_sentences, context_offsets, original_lengths = self._get_tars_formatted_sentences(data_points, [1] * len(data_points), [1] * len(data_points))
-
-            # forward pass to get scores
-            scores, gold_labels = self.tars_model.forward(expanded_sentences, skip_embedding=False)  # type: ignore
-
-            # calculate loss given scores and labels
-            loss = self.tars_model._calculate_loss(scores, gold_labels)
-
-            return loss
-
-        final_sentences, _ = self._make_and_embed_tars_with_context(data_points)
+        else:
+            use_context = True
+            sentences = self._extend_context_and_embed(data_points)
 
         # forward pass to get scores
-        scores, gold_labels = self.tars_model.forward(final_sentences, skip_embedding=True)  # type: ignore
+        scores, gold_labels = self.tars_model.forward(sentences, skip_embedding=use_context)   # type: ignore
 
         # calculate loss given scores and labels
         loss = self.tars_model._calculate_loss(scores, gold_labels)
 
         return loss
 
-    def _make_and_embed_tars_with_context(self, data_points, label = None):
-        # Override embed method
-        if not self.tars_model.embeddings._everything_embedded(
-                data_points) or not self.tars_model.embeddings.static_embeddings:
-            expanded_sentences = []
-            context_offsets = []
+    def _extend_context_and_embed(self, data_points, label=None):
 
-            if self.tars_model.embeddings.context_length > 0:
-                # set context if not set already
-                for sentence in data_points:
-                    # create expanded sentence and remember context offsets
-                    expanded_sentence, context_offset = self.tars_model.embeddings._expand_sentence_with_context(
-                        sentence)
-                    expanded_sentences.append(expanded_sentence)
-                    context_offsets.append(context_offset)
-            else:
-                expanded_sentences.extend(data_points)
+        # set context
+        expanded_sentences, context_offsets = self._extend_context(data_points)
 
-            # Transform input data into TARS format
-            original_lengths = [len(x) for x in data_points]
-            expanded_sentences, context_offsets, original_lengths = \
-                self._get_tars_formatted_sentences(expanded_sentences, context_offsets, original_lengths, label=label)
-            # print(expanded_sentences)
-            self.tars_model.embeddings._add_embeddings_to_sentences(expanded_sentences)
+        # make tars format
+        expanded_sentences, examples_per_sentence = self._get_tars_formatted_sentences(expanded_sentences, label=label)
 
-            tars_label_offsets = []
-            for expanded_sentence, context_offset in zip(
-                    expanded_sentences, context_offsets
-            ):
-                tars_offset = 0
-                for token_idx, token in enumerate(expanded_sentence):
-                    tars_offset += 1
-                    if token.text == self.separator:
-                        tars_label_offsets.append(tars_offset)
-                        break
+        # extend contexts + original lengths (flatten list eventually)
+        context_offsets = [num * [offset] for offset, num in zip(context_offsets, examples_per_sentence)]
+        context_offsets = [item for sublist in context_offsets for item in sublist]
+        original_lengths = [num * [length] for length, num in zip([len(s) for s in data_points], examples_per_sentence)]
+        original_lengths = [item for sublist in original_lengths for item in sublist]
 
-            # move embeddings from context back to original sentence (if using context)
-            final_sentences = []
-            if self.tars_model.embeddings.context_length > 0:
-                for expanded_sentence, original_length, context_offset, tars_offset in zip(
-                        expanded_sentences, original_lengths, context_offsets, tars_label_offsets
-                ):
-                    final_sentence = Sentence()
-                    if self.tars_model.embeddings.token_embedding:
-                        for label_idx in range(tars_offset):
-                            final_sentence.add_token(expanded_sentence[label_idx],
-                                                     force_adjuct_indices=True,
-                                                     )
+        # embed extended sentence
+        self.tars_model.embeddings._add_embeddings_to_sentences(expanded_sentences)
 
-                        for token_idx in range(original_length):
-                            final_sentence.add_token(expanded_sentence[tars_offset + context_offset + token_idx],
-                                                     force_adjuct_indices=True,)
+        # move embeddings from context back to original sentence (if using context)
+        final_sentences = []
 
-                    final_sentences.append(final_sentence)
-        return final_sentences, tars_label_offsets
+        for expanded_sentence, original_length, context_offset in zip(
+                expanded_sentences, original_lengths, context_offsets
+        ):
+            final_sentence = Sentence()
+            label_offset = 0
+            while True:
+                final_sentence.add_token(expanded_sentence[label_offset], force_adjuct_indices=True)
+                if expanded_sentence[label_offset].text == self.separator:
+                    label_offset += 1
+                    break
+                label_offset += 1
+
+            for token_idx in range(original_length):
+                final_sentence.add_token(expanded_sentence[label_offset + context_offset + token_idx], force_adjuct_indices=True)
+
+            if bool(expanded_sentence.annotation_layers):
+                final_sentence.annotation_layers = expanded_sentence.annotation_layers
+            if bool(expanded_sentence.multitask_annotations):
+                final_sentence.multitask_annotations = expanded_sentence.multitask_annotations
+
+            final_sentences.append(final_sentence)
+
+        return final_sentences
+
+    def _extend_context(self, data_points):
+        expanded_sentences = []
+        context_offsets = []
+
+        # set context if not set already
+        for sentence in data_points:
+            # create expanded sentence and remember context offsets
+            expanded_sentence, context_offset = self.tars_model.embeddings._expand_sentence_with_context(sentence)
+            expanded_sentences.append(expanded_sentence)
+            context_offsets.append(context_offset)
+
+        return expanded_sentences, context_offsets
 
     def _get_tars_formatted_sentence(self, label, sentence):
 
@@ -673,11 +674,16 @@ class TARSTagger(FewshotClassifier):
 
                     all_detected = {}
                     for label in all_labels:
-                        # tars_sentence = self._get_tars_formatted_sentence(label, sentence)
 
-                        tars_sentences, offsets = self._make_and_embed_tars_with_context([sentence], label)
-                        tars_sentence = tars_sentences[0]
-                        print(tars_sentence)
+                        if self.tars_model.embeddings.context_length == 0:
+                            tars_sentence, _ = self._get_tars_formatted_sentences([sentence], label=label)
+                            skip_embedding = False
+                        else:
+                            tars_sentence = self._extend_context_and_embed([sentence], label=label)
+                            skip_embedding = True
+
+                        assert len(tars_sentence) == 1
+                        tars_sentence = tars_sentence.pop()
 
                         label_length = 0 if not self.prefix else len(label.split(" ")) + len(self.separator.split(" "))
 
@@ -685,7 +691,7 @@ class TARSTagger(FewshotClassifier):
                             tars_sentence,
                             label_name=label_name,
                             return_loss=True,
-                            skip_embedding=True,
+                            skip_embedding=skip_embedding,
                         )
                         overall_loss += loss_and_count[0].item()
                         overall_count += loss_and_count[1]
