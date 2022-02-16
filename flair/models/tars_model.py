@@ -452,6 +452,9 @@ class TARSTagger(FewshotClassifier):
             use_context = True
             sentences = self._extend_context_and_embed(data_points)
 
+        if len(sentences) == 0:
+            return torch.tensor(0.0, dtype=torch.float, device=flair.device, requires_grad=True), 0
+
         # forward pass to get scores
         scores, gold_labels = self.tars_model.forward(sentences, skip_embedding=use_context)   # type: ignore
 
@@ -475,7 +478,8 @@ class TARSTagger(FewshotClassifier):
         original_lengths = [item for sublist in original_lengths for item in sublist]
 
         # embed extended sentence
-        self.tars_model.embeddings._add_embeddings_to_sentences(expanded_sentences)
+        if expanded_sentences:
+            self.tars_model.embeddings._add_embeddings_to_sentences(expanded_sentences)
 
         # move embeddings from context back to original sentence (if using context)
         final_sentences = []
