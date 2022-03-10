@@ -52,7 +52,7 @@ class DataLoader(torch.utils.data.dataloader.DataLoader):
         super(DataLoader, self).__init__(
             dataset,
             batch_size=batch_size,
-            shuffle=shuffle,
+            #shuffle=shuffle,
             sampler=sampler,
             batch_sampler=batch_sampler,
             num_workers=num_workers,

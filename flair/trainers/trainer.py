@@ -103,6 +103,7 @@ class ModelTrainer:
         write_weights: bool = False,
         num_workers: Optional[int] = None,
         sampler=None,
+        batch_sampler=None,
         use_amp: bool = False,
         amp_opt_level: str = "O1",
         eval_on_train_fraction: float = 0.0,
@@ -441,10 +442,11 @@ class ModelTrainer:
 
                 batch_loader = DataLoader(
                     train_data,
-                    batch_size=mini_batch_size,
-                    shuffle=shuffle if epoch > 1 or isinstance(self.corpus, MultiCorpus) else False,  # never shuffle the first epoch
+                    #batch_size=mini_batch_size,
+                    #shuffle=shuffle if epoch > 1 or isinstance(self.corpus, MultiCorpus) else False,  # never shuffle the first epoch
                     num_workers=num_workers,
-                    sampler=sampler,
+                    #sampler=sampler,
+                    batch_sampler=batch_sampler
                 )
 
                 self.model.train()
