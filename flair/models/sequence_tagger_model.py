@@ -46,6 +46,7 @@ class SequenceTagger(flair.nn.Classifier[Sentence]):
         loss_weights: Dict[str, float] = None,
         init_from_state_dict: bool = False,
         allow_unk_predictions: bool = False,
+        more_capacity: bool = False
     ):
         """
         Sequence Tagger class for predicting labels for single tokens. Can be parameterized by several attributes.
@@ -150,6 +151,8 @@ class SequenceTagger(flair.nn.Classifier[Sentence]):
         if self.reproject_embeddings:
             self.embedding2nn = torch.nn.Linear(embedding_dim, embedding_dim)
 
+        self.more_capacity = more_capacity
+
         # ----- RNN layer -----
         if use_rnn:
             # If shared RNN provided, else create one for model
@@ -180,7 +183,12 @@ class SequenceTagger(flair.nn.Classifier[Sentence]):
             # final linear map to tag space
             self.linear = torch.nn.Linear(hidden_output_dim, len(self.label_dictionary))
         else:
-            self.linear = torch.nn.Linear(embedding_dim, len(self.label_dictionary))
+            if self.more_capacity:
+                self.linear2 = torch.nn.Linear(embedding_dim, embedding_dim)
+                self.relu = torch.nn.ReLU()
+                self.linear = torch.nn.Linear(embedding_dim, len(self.label_dictionary))
+            else:
+                self.linear = torch.nn.Linear(embedding_dim, len(self.label_dictionary))
 
         # the loss function is Viterbi if using CRF, else regular Cross Entropy Loss
         self.loss_function = (
@@ -311,7 +319,12 @@ class SequenceTagger(flair.nn.Classifier[Sentence]):
             sentence_tensor = self.locked_dropout(sentence_tensor)
 
         # linear map to tag space
-        features = self.linear(sentence_tensor)
+        if self.more_capacity:
+            features = self.linear2(sentence_tensor)
+            features = self.relu(features)
+            features = self.linear(features)
+        else:
+            features = self.linear(sentence_tensor)
 
         # Depending on whether we are using CRF or a linear layer, scores is either:
         # -- A tensor of shape (batch size, sequence length, tagset size, tagset size) for CRF
