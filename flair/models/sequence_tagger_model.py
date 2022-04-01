@@ -43,6 +43,7 @@ class SequenceTagger(flair.nn.Classifier[Sentence]):
         train_initial_hidden_state: bool = False,
         loss_weights: Dict[str, float] = None,
         init_from_state_dict: bool = False,
+        more_capacity: bool = False
     ):
         """
         Sequence Tagger class for predicting labels for single tokens. Can be parameterized by several attributes.
@@ -78,6 +79,7 @@ class SequenceTagger(flair.nn.Classifier[Sentence]):
         self.tagset_size = len(tag_dictionary)
         self.tag_type = tag_type
         self.label_dictionary = tag_dictionary
+        self.more_capacity = more_capacity
 
         # ----- Initial loss weights parameters -----
         self.weight_dict = loss_weights
@@ -148,7 +150,12 @@ class SequenceTagger(flair.nn.Classifier[Sentence]):
             # final linear map to tag space
             self.linear = torch.nn.Linear(hidden_output_dim, len(tag_dictionary))
         else:
-            self.linear = torch.nn.Linear(embedding_dim, len(tag_dictionary))
+            if self.more_capacity:
+                self.linear = torch.nn.Linear(embedding_dim, len(tag_dictionary))
+                self.relu = torch.nn.ReLU()
+                self.linear2 = torch.nn.Linear(embedding_dim, embedding_dim)
+            else:
+                self.linear = torch.nn.Linear(embedding_dim, len(tag_dictionary))
 
         # ----- CRF / Linear layer -----
         if use_crf:
@@ -280,7 +287,12 @@ class SequenceTagger(flair.nn.Classifier[Sentence]):
             sentence_tensor = self.locked_dropout(sentence_tensor)
 
         # linear map to tag space
-        features = self.linear(sentence_tensor)
+        if self.more_capacity:
+            features = self.linear2(sentence_tensor)
+            features = self.relu(features)
+            features = self.linear(features)
+        else:
+            features = self.linear(sentence_tensor)
 
         # Depending on whether we are using CRF or a linear layer, scores is either:
         # -- A tensor of shape (batch size, sequence length, tagset size, tagset size) for CRF
