@@ -483,7 +483,6 @@ class TARSTagger(FewshotClassifier):
             original_lengths = [len(x) for x in data_points]
             expanded_sentences, context_offsets, original_lengths = \
                 self._get_tars_formatted_sentences(expanded_sentences, context_offsets, original_lengths, label=label)
-            # print(expanded_sentences)
             self.tars_model.embeddings._add_embeddings_to_sentences(expanded_sentences)
 
             tars_label_offsets = []
@@ -677,7 +676,6 @@ class TARSTagger(FewshotClassifier):
 
                         tars_sentences, offsets = self._make_and_embed_tars_with_context([sentence], label)
                         tars_sentence = tars_sentences[0]
-                        print(tars_sentence)
 
                         label_length = 0 if not self.prefix else len(label.split(" ")) + len(self.separator.split(" "))
 
