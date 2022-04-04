@@ -312,6 +312,7 @@ class DataPoint:
     def __init__(self):
         self.annotation_layers = {}
         self._embeddings: Dict[str, torch.Tensor] = {}
+        self.multitask_annotations = []
 
     @property
     @abstractmethod
@@ -364,6 +365,10 @@ class DataPoint:
             return self.labels
 
         return self.annotation_layers[typename] if typename in self.annotation_layers else []
+
+    def add_multitask_id(self, task_id: str):
+        self.multitask_annotations.append(MultitaskAssignment(task_id))
+        return self
 
     @property
     def labels(self) -> List[Label]:
@@ -1480,6 +1485,14 @@ class Corpus:
                 class_to_count[label.value] += 1
         return class_to_count
 
+    def set_multitask_id(self, task_id: str):
+        """
+        Sets multitask id to all sentences in corpus
+        :param task_id: key to identify model in multitask forward method
+        """
+        for sentence in self.get_all_sentences():
+            sentence.add_multitask_id(task_id)
+
     def get_all_sentences(self) -> ConcatDataset:
         parts = []
         if self.train:
@@ -1558,6 +1571,93 @@ def iob2(tags):
         else:  # conversion IOB1 to IOB2
             tags[i].value = "B" + tag.value[1:]
     return True
+
+
+class MultitaskCorpus(MultiCorpus):
+    """
+    MultitaskCorpus takes different tasks as parameters and is used for Multitask Model Training
+    Assigns to each corpus its respective task id
+    """
+
+    def __init__(self, *args):
+
+        self._assert_inputs(args)
+        self.models = {}
+
+        corpora = []
+
+        for id, corpus_config in enumerate(args):
+
+            task_id = f"task_{id}"
+            corpus = corpus_config.get("corpus")
+            model = corpus_config.get("model")
+
+            corpus.set_multitask_id(task_id)
+            if not corpus in corpora: corpora.append(corpus)
+
+            model.corpus_name = corpus.__class__.__name__
+
+            self.models[task_id] = corpus_config.get("model")
+
+        super(MultitaskCorpus, self).__init__(corpora)
+
+    @staticmethod
+    def _assert_inputs(args):
+        assert len(args) != 0, \
+            "Please provide corpus information."
+
+        # check - all args are dictionaries
+        assert all(map(lambda corpus_config: isinstance(corpus_config, dict), args)), \
+            "MultitaskCorpus takes an arbitrary number of dictionaries as input"
+
+        # check - corpus keyword in each dict
+        assert all(map(lambda corpus_config: "corpus" in corpus_config, args)), \
+            "All inputs need a corpus, defined by the keyword 'corpus'."
+
+        # check - corpus datatype provided to 'corpus' keyword
+        assert all(map(lambda corpus_config: isinstance(corpus_config["corpus"], Corpus), args)), \
+            "Provide only Corpus datatype to the keyword 'corpus'."
+
+        # check - task keyword in each dict
+        assert all(map(lambda corpus_config: "model" in corpus_config, args)), \
+            "All corpora need to be assigned to a downstream task defined by the keyword 'task'."
+
+        # check - corpus datatype provided to 'corpus' keyword
+        assert all(map(lambda corpus_config:isinstance(corpus_config["model"], flair.nn.Model), args)), \
+            "Multitask models need to torch.nn.Modules, coming from the multitask module."
+
+
+class MultitaskAssignment:
+    """
+    This class represents a task assignment (necessary for multitask models) in order
+    to determine which path to go in multitask models forward method
+    """
+
+    def __init__(self, task_id: str):
+        """
+        :param task_id
+        """
+        self.task_id = task_id
+        super().__init__()
+
+    @property
+    def task_id(self):
+        return self._task_id
+
+    @task_id.setter
+    def task_id(self, task_id):
+        if not task_id and task_id != "":
+            raise ValueError(
+                "Incorrect task provided."
+            )
+        else:
+            self._task_id = task_id
+
+    def __str__(self):
+        return f"This sentence belongs to multitask model ID: ({self._task_id})"
+
+    def __repr__(self):
+        return f"({self._task_id})"
 
 
 def iob_iobes(tags):
